@@ -1,21 +1,34 @@
 {
-  "name": "jimaku-subs-stremio-v2",
-  "version": "2.0.0",
-  "description": "Stremio addon for Japanese subtitles from Jimaku.cc community database - No SDK Version",
-  "main": "server.js",
-  "type": "commonjs",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "node server.js",
-    "publish": "node publish.js"
+  "name": "jimaku-subs-stremio",
+  "version": "3.0.0",
+  "description": "Stremio addon that finds Japanese subtitles on Jimaku.cc for anime and Japanese media, and converts ASS to SRT on the fly.",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "jimaku-subs-stremio": "src/server.js"
   },
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "ass-to-srt": "^1.2.1",
-    "bent": "^7.3.12",
-    "express": "^4.18.2",
-    "stremio-addon-sdk": "^1.6.10"
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "lint": "eslint .",
+    "publish-to-stremio": "node scripts/publish-to-stremio.js"
+  },
+  "keywords": [
+    "stremio",
+    "stremio-addon",
+    "subtitles",
+    "jimaku",
+    "anime",
+    "japanese"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "eslint": "^10.0.0",
+    "globals": "^17.0.0"
   }
 }
