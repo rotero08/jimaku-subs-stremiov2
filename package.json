@@ -10,8 +10,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "dev:mock": "node --watch scripts/dev-mock.js",
     "test": "node --test",
     "lint": "eslint .",
+    "check": "eslint . && node --test",
     "publish-to-stremio": "node scripts/publish-to-stremio.js"
   },
   "keywords": [
