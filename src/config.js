@@ -33,7 +33,7 @@ export function loadConfig(env = process.env) {
     serverKey: env.JIMAKU_API_KEY || null,
     logLevel: env.LOG_LEVEL ?? 'info',
     logFormat: env.LOG_FORMAT ?? (env.NODE_ENV === 'production' ? 'json' : 'pretty'),
-    userAgent: env.USER_AGENT ?? `jimaku-sakura-stremio/${VERSION} (Stremio addon)`,
+    userAgent: env.USER_AGENT ?? `jimaku-kaiyo-subs/${VERSION} (Stremio addon)`,
     publishToCentral: env.PUBLISH_TO_CENTRAL === 'true',
     upstream: {
       jimaku: noSlash(env.JIMAKU_API_URL ?? 'https://jimaku.cc/api'),

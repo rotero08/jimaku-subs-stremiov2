@@ -29,7 +29,7 @@ describe('Jimaku client', () => {
     await client.searchByAnilist(154587, VALID_KEY);
     const [request] = mock.requests;
     assert.equal(request.headers.authorization, VALID_KEY);
-    assert.match(request.headers['user-agent'], /^jimaku-sakura-stremio\/\d+\.\d+\.\d+ \(Stremio addon\)$/);
+    assert.match(request.headers['user-agent'], /^jimaku-kaiyo-subs\/\d+\.\d+\.\d+ \(Stremio addon\)$/);
     assert.equal(request.path, '/jimaku/entries/search');
     assert.deepEqual(request.query, { anilist_id: '154587' });
   });

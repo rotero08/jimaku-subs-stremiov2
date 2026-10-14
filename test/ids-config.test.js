@@ -85,7 +85,7 @@ describe('manifest', () => {
   });
 
   it('keeps an installed copy matching its first-version id', () => {
-    assert.equal(buildManifest({ ...base, ready: true }).id, 'community.jimakusakura');
-    assert.equal(buildManifest({ ...base, ready: true, config: 'eyJqaW1ha3VBcGlLZXki' }).id, 'community.jimakusakura.eyJqaW1h');
+    assert.equal(buildManifest({ ...base, ready: true }).id, 'community.jimakukaiyo');
+    assert.equal(buildManifest({ ...base, ready: true, config: 'eyJqaW1ha3VBcGlLZXki' }).id, 'community.jimakukaiyo.eyJqaW1h');
   });
 });

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="public/logo.png" width="96" height="96" alt="Jimaku Subs Sakura logo: a cherry blossom above two subtitle lines">
+<img src="public/logo.png" width="96" height="96" alt="Jimaku Kaiyo Subs logo: the character 字 on a green and teal circle with waves">
 
-# Jimaku Subs Sakura for Stremio
+# Jimaku Kaiyo Subs for Stremio
 
 **Japanese subtitles from the Jimaku community, inside Stremio.**<br>
 For anime, and for Japanese films and series.

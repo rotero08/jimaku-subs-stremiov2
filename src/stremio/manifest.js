@@ -1,7 +1,7 @@
 import { ID_PREFIXES, TYPES } from './ids.js';
 import { configTag } from './userConfig.js';
 
-export const ADDON_ID = 'community.jimakusakura';
+export const ADDON_ID = 'community.jimakukaiyo';
 
 /**
  * @param {object} options
@@ -16,7 +16,7 @@ export function buildManifest({ version, baseUrl, config, ready }) {
     // installed back then keep matching their stored manifest.
     id: config ? `${ADDON_ID}.${configTag(config)}` : ADDON_ID,
     version,
-    name: 'Jimaku Subs Sakura',
+    name: 'Jimaku Kaiyo Subs',
     description:
       'Japanese subtitles for anime and Japanese media from the Jimaku.cc community. ' +
       'Works with Kitsu, MAL, AniList and IMDb-based catalogs; ASS subtitles can be converted to SRT.',

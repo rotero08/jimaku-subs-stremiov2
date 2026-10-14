@@ -28,7 +28,7 @@ describe('metadata lookups', () => {
       assert.equal(request.path, '/kitsu/anime/46474/mappings');
       assert.equal(request.query['filter[externalSite]'], 'anilist/anime');
       assert.equal(request.headers.accept, 'application/vnd.api+json');
-      assert.match(request.headers['user-agent'], /jimaku-sakura-stremio/);
+      assert.match(request.headers['user-agent'], /jimaku-kaiyo-subs/);
     });
 
     it('says null when Kitsu has no mapping, or does not know the anime', async () => {

@@ -31,8 +31,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the image and check that it starts
         run: |
-          docker build -t jimaku-sakura .
-          docker run -d --name addon -p 7000:7000 jimaku-sakura
+          docker build -t jimaku-kaiyo .
+          docker run -d --name addon -p 7000:7000 jimaku-kaiyo
           for i in $(seq 1 20); do
             curl -fsS http://localhost:7000/health && exit 0
             sleep 1

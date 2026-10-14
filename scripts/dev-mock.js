@@ -22,7 +22,7 @@ server.listen(config.port, config.host, () => {
   const origin = `http://localhost:${config.port}`;
   const demo = encodeConfig({ jimakuApiKey: 'demo-key-12345' });
   console.log(`
-Jimaku Subs Sakura in demo mode: nothing here touches the real Jimaku.
+Jimaku Kaiyo Subs in demo mode: nothing here touches the real Jimaku.
 
   Setup page    ${origin}/configure
   Addon         ${origin}/${demo}/manifest.json
