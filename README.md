@@ -210,6 +210,6 @@ The setup page is served with a strict Content-Security-Policy (`default-src 'no
 
 ## Credits
 
-A fork of [jimaku-subs-stremio](https://github.com/Pedrubik2000/jimaku-subs-stremio) by Pedrubik2000, under its MIT licence (see `LICENSE`).
+A fork of [jimaku-subs-stremio](https://github.com/Pedrubik2000/jimaku-subs-stremio) by Pedrubik2000, under its MIT licence; the changes made since are MIT too (both notices are in `LICENSE`).
 Subtitles are provided by the [Jimaku](https://jimaku.cc) community and belong to their uploaders; anime metadata comes from
 [Kitsu](https://kitsu.io), [AniList](https://anilist.co) and [Cinemeta](https://v3-cinemeta.strem.io). Not affiliated with Jimaku or Stremio.
