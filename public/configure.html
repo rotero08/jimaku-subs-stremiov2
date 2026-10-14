@@ -14,68 +14,71 @@
   <div class="glow" aria-hidden="true"></div>
   <main class="shell">
     <header class="hero">
-      <img class="logo" src="/logo.png" alt="" width="84" height="84">
+      <img class="logo" src="/logo.png" alt="" width="56" height="56">
       <div>
         <h1>Jimaku Subtitles</h1>
-        <p class="tagline">Japanese subtitles from the <a href="https://jimaku.cc" target="_blank" rel="noopener">Jimaku</a> community, inside Stremio.</p>
-        <p class="chips" aria-label="What it works with">
-          <span>Kitsu</span><span>MyAnimeList</span><span>AniList</span><span>IMDb</span><span>ASS → SRT</span>
-        </p>
+        <p class="tagline">Japanese subtitles from the <a href="https://jimaku.cc" target="_blank" rel="noopener">Jimaku</a> community, inside Stremio. Works with Kitsu, MyAnimeList, AniList and IMDb titles, and with ZIP files.</p>
       </div>
     </header>
 
-    <section class="card" id="step-key" aria-labelledby="h-key">
-      <h2 id="h-key"><span class="num" aria-hidden="true">1</span>Your Jimaku API key</h2>
-      <p class="hint">Jimaku is free, but its API needs an account. <a href="https://jimaku.cc/account" target="_blank" rel="noopener">Open your account page</a>, create an API key and paste it here.</p>
-      <label for="key">API key</label>
-      <div class="field">
-        <input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your key">
-        <button id="reveal" class="icon-button" type="button" aria-label="Show the key" aria-pressed="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
-        </button>
-      </div>
-      <div class="row">
-        <button id="test" class="btn" type="button" disabled>Test the key</button>
-        <p id="status" class="status" role="status" aria-live="polite"></p>
-      </div>
-    </section>
-
-    <section class="card" id="step-options" aria-labelledby="h-options">
-      <h2 id="h-options"><span class="num" aria-hidden="true">2</span>Options</h2>
-      <fieldset>
-        <legend>What to do with ASS subtitles</legend>
-        <p class="hint">Most files on Jimaku are ASS, a styled format. Not every Stremio app can show it.</p>
-        <div class="choices">
-          <label class="choice"><input type="radio" name="ass" value="srt" checked><span><b>Convert to SRT</b><small>Works everywhere. Recommended.</small></span></label>
-          <label class="choice"><input type="radio" name="ass" value="ass"><span><b>Keep ASS</b><small>Keeps fonts and colours in newer apps.</small></span></label>
-          <label class="choice"><input type="radio" name="ass" value="both"><span><b>Offer both</b><small>A longer list to choose from.</small></span></label>
+    <div class="card">
+      <section class="step" id="step-key" aria-labelledby="h-key">
+        <h2 id="h-key"><span class="num" aria-hidden="true">1</span>Your Jimaku API key</h2>
+        <p class="hint">Jimaku is free, but its API needs an account. <a href="https://jimaku.cc/account" target="_blank" rel="noopener">Open your account page</a>, create a key and paste it here.</p>
+        <div class="row">
+          <div class="field">
+            <label class="sr-only" for="key">API key</label>
+            <input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your key">
+            <button id="reveal" class="icon-button" type="button" aria-label="Show the key" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <button id="test" class="btn" type="button" disabled>Test the key</button>
         </div>
-      </fieldset>
-      <label for="max">Subtitles listed per episode</label>
-      <select id="max">
-        <option value="3">3</option><option value="5">5</option><option value="10" selected>10</option><option value="15">15</option><option value="20">20</option>
-      </select>
-    </section>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </section>
 
-    <section class="card" id="step-install" aria-labelledby="h-install">
-      <h2 id="h-install"><span class="num" aria-hidden="true">3</span>Install</h2>
-      <div class="actions">
-        <a id="install" class="btn primary" href="#" aria-disabled="true">Install in Stremio</a>
-        <a id="web" class="btn" href="#" target="_blank" rel="noopener" aria-disabled="true">Open in Stremio Web</a>
-        <button id="copy" class="btn" type="button" disabled>Copy the link</button>
-      </div>
-      <label for="url">Addon link, for installing by hand</label>
-      <input id="url" type="text" readonly value="" placeholder="Your link appears here">
-      <p id="note-local" class="note" hidden>This server is not on https, so the one-click button is off. In Stremio, open Addons, paste the link above into the search box and press Install.</p>
-      <p class="warn"><b>The link contains your key.</b> Treat it like a password: do not post it or share it.</p>
-    </section>
+      <section class="step" id="step-options" aria-labelledby="h-options">
+        <h2 id="h-options"><span class="num" aria-hidden="true">2</span>Options</h2>
+        <div class="options">
+          <fieldset>
+            <legend>ASS subtitles <span class="legend-note">(a styled format that not every app can show)</span></legend>
+            <div class="seg">
+              <label title="Works in every app. Recommended."><input type="radio" name="ass" value="srt" checked><span>Convert to SRT</span></label>
+              <label title="The original file: newer apps keep its fonts and colours."><input type="radio" name="ass" value="ass"><span>Keep ASS</span></label>
+              <label title="Both, for choosing in the player: a longer list."><input type="radio" name="ass" value="both"><span>Both</span></label>
+            </div>
+          </fieldset>
+          <div class="max">
+            <label for="max">Listed per episode</label>
+            <select id="max">
+              <option value="3">3</option><option value="5">5</option><option value="10" selected>10</option><option value="15">15</option><option value="20">20</option>
+            </select>
+          </div>
+        </div>
+      </section>
 
-    <details class="card faq">
+      <section class="step" id="step-install" aria-labelledby="h-install">
+        <h2 id="h-install"><span class="num" aria-hidden="true">3</span>Install</h2>
+        <div class="actions">
+          <a id="install" class="btn primary" href="#" aria-disabled="true">Install in Stremio</a>
+          <a id="web" class="btn" href="#" target="_blank" rel="noopener" aria-disabled="true">Stremio Web</a>
+          <button id="copy" class="btn" type="button" disabled>Copy the link</button>
+        </div>
+        <label class="sr-only" for="url">Addon link, for installing by hand</label>
+        <input id="url" type="text" readonly value="" placeholder="Your addon link appears here">
+        <p id="note-local" class="note" hidden>This server is not on https, so the one-click button is off. In Stremio, open Addons, paste the link above into the search box and press Install.</p>
+        <p class="warn"><b>The link contains your key.</b> Treat it like a password: do not post it or share it.</p>
+      </section>
+    </div>
+
+    <details class="faq">
       <summary>How it finds subtitles, and what to do when nothing shows up</summary>
       <ul>
         <li><b>Matching.</b> For anime from the Kitsu addon (or MAL, AniList, AniDB catalogs) the exact title is looked up by its AniList id. For IMDb-based catalogs it uses the TMDB id, and falls back to the title.</li>
         <li><b>Best first.</b> If the file you are playing has a release name (for example <code>[SubsPlease] … (1080p)</code>) the subtitle made for the same release is listed first: it is the one that stays in sync.</li>
-        <li><b>Nothing appears?</b> Jimaku may not have that episode yet. Check <a href="https://jimaku.cc" target="_blank" rel="noopener">jimaku.cc</a>. Some episodes are only available inside ZIP files, which Stremio cannot read.</li>
+        <li><b>ZIP files.</b> Subtitles that Jimaku only has inside a ZIP, such as a whole season, are opened for you and the file for your episode is picked out.</li>
+        <li><b>Nothing appears?</b> Jimaku may not have that episode yet. Check <a href="https://jimaku.cc" target="_blank" rel="noopener">jimaku.cc</a>.</li>
         <li><b>Privacy.</b> This server does not store your key or what you watch. The key travels inside the addon link, which Stremio keeps with your addons; requests use it only to ask Jimaku for subtitles.</li>
       </ul>
     </details>
