@@ -1,11 +1,11 @@
 {
-  "name": "jimaku-subs-stremio",
+  "name": "jimaku-sakura-stremio",
   "version": "3.0.0",
   "description": "Stremio addon that finds Japanese subtitles on Jimaku.cc for anime and Japanese media, and converts ASS to SRT on the fly.",
   "type": "module",
   "main": "src/server.js",
   "bin": {
-    "jimaku-subs-stremio": "src/server.js"
+    "jimaku-sakura-stremio": "src/server.js"
   },
   "scripts": {
     "start": "node src/server.js",

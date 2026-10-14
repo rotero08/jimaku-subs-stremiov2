@@ -1,7 +1,7 @@
 import { ID_PREFIXES, TYPES } from './ids.js';
 import { configTag } from './userConfig.js';
 
-export const ADDON_ID = 'community.jimakusub.v2';
+export const ADDON_ID = 'community.jimakusakura';
 
 /**
  * @param {object} options
@@ -16,7 +16,7 @@ export function buildManifest({ version, baseUrl, config, ready }) {
     // installed back then keep matching their stored manifest.
     id: config ? `${ADDON_ID}.${configTag(config)}` : ADDON_ID,
     version,
-    name: 'Jimaku Subtitles',
+    name: 'Jimaku Sakura',
     description:
       'Japanese subtitles for anime and Japanese media from the Jimaku.cc community. ' +
       'Works with Kitsu, MAL, AniList and IMDb-based catalogs; ASS subtitles can be converted to SRT.',
@@ -29,12 +29,6 @@ export function buildManifest({ version, baseUrl, config, ready }) {
     behaviorHints: {
       configurable: true,
       configurationRequired: !ready,
-    },
-    // Registration with the Stremio Addons community list (stremio-addons.net).
-    stremioAddonsConfig: {
-      issuer: 'https://stremio-addons.net',
-      signature:
-        'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0.._lqf7gOkdIFimbAlTD8g7Q.eVQYjktZnC1FWlOybUQqJR3-AX2DfU4HtCWiVSN6ZqzE_e9wBkPbtynEQ9Xhxl6bj6Jj38Sc2-RTRfdRyrm2w9w128IzJvKE6LIouFhSO1qXB6_mH5uMPy1TzMduOLsh.C1khxFtQh5Y38gfAEa11_A',
     },
   };
 }

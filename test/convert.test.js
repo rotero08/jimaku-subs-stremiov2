@@ -123,7 +123,7 @@ describe('converter', () => {
   it('sends its User-Agent', async () => {
     const srt = fileOf(101, (n) => n.startsWith('[Erai-raws]'));
     await converter.convert(url(101, srt.name));
-    assert.match(mock.requests[0].headers['user-agent'], /^jimaku-subs-stremio\//);
+    assert.match(mock.requests[0].headers['user-agent'], /^jimaku-sakura-stremio\//);
   });
 
   it('follows a redirect that stays on an allowed host', async () => {

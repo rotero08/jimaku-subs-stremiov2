@@ -133,7 +133,7 @@ describe('the addon over HTTP', () => {
     it('without settings, asks to be configured', async () => {
       const { response, body } = await addon.getJson('/manifest.json');
       assert.equal(response.status, 200);
-      assert.equal(body.id, 'community.jimakusub.v2');
+      assert.equal(body.id, 'community.jimakusakura');
       assert.deepEqual(body.resources, ['subtitles']);
       assert.deepEqual(body.types, ['movie', 'series', 'anime']);
       assert.deepEqual(body.idPrefixes, ['tt', 'kitsu', 'mal', 'anilist', 'anidb']);
@@ -145,7 +145,7 @@ describe('the addon over HTTP', () => {
     it('with settings, is ready, and has an id of its own', async () => {
       const { body } = await addon.getJson(`/${segment()}/manifest.json`);
       assert.equal(body.behaviorHints.configurationRequired, false);
-      assert.equal(body.id, `community.jimakusub.v2.${segment().slice(0, 8)}`);
+      assert.equal(body.id, `community.jimakusakura.${segment().slice(0, 8)}`);
       assert.ok(!JSON.stringify(body).includes(VALID_KEY), 'the key is never echoed back');
     });
 
