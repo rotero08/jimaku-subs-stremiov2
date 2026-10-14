@@ -6,6 +6,7 @@
 
 import { createServer } from 'node:http';
 import { loadConfig } from '../src/config.js';
+import { makeZip } from './zip-writer.js';
 
 export const VALID_KEY = 'valid-key-12345';
 
@@ -16,6 +17,8 @@ export const ENTRIES = [
   { id: 102, name: 'Kimi no Na wa.', english_name: 'Your Name.', japanese_name: '君の名は。', anilist_id: 21519, tmdb_id: 'movie:372058', flags: FLAGS({ movie: true }) },
   { id: 103, name: 'Shingeki no Kyojin', english_name: 'Attack on Titan', japanese_name: '進撃の巨人', anilist_id: 16498, tmdb_id: 'tv:1429', flags: FLAGS() },
   { id: 104, name: 'Shingeki no Kyojin 2nd Season', english_name: 'Attack on Titan Season 2', japanese_name: '進撃の巨人 Season2', anilist_id: 25777, tmdb_id: 'tv:1429', flags: FLAGS() },
+  // A film whose subtitles exist only inside a ZIP.
+  { id: 106, name: 'Hoshizora no Mukou', english_name: 'Beyond the Starry Sky', japanese_name: '星空の向こう', anilist_id: 99106, tmdb_id: 'movie:99106', flags: FLAGS({ movie: true }) },
   { id: 105, name: 'Hanzawa Naoki', english_name: null, japanese_name: '半沢直樹', anilist_id: null, tmdb_id: 'tv:61769', flags: FLAGS({ anime: false }) },
 ];
 
@@ -57,6 +60,34 @@ export const sjisSrt = () =>
 
 const file = (name, episode, body) => ({ name, episode, body });
 
+/** "フリーレン 第05話.srt" in Shift-JIS, as a Japanese Windows would write the name in a ZIP (no UTF-8 flag). */
+export const sjisName = Buffer.from([0x83, 0x74, 0x83, 0x8a, 0x81, 0x5b, 0x83, 0x8c, 0x83, 0x93, 0x20, 0x91, 0xe6, 0x30, 0x35, 0x98, 0x62, 0x2e, 0x73, 0x72, 0x74]);
+
+/**
+ * Episodes 4 to 6 of Frieren exist only inside ZIP files, as they often do on Jimaku: a folder per
+ * release, fonts alongside, and the junk a Mac adds. The second archive names its files the way
+ * other uploaders do (E05, 第05話 in Shift-JIS) and holds old Shift-JIS subtitles.
+ */
+export const FRIEREN_BATCH = 'Sousou no Frieren [SubsPlease] - Episodes 04-06 (1080p) [ASS].zip';
+export const FRIEREN_OTHER = 'Sousou no Frieren Season 1 [Fansub] [SRT].zip';
+export const FRIEREN_BROKEN = 'Sousou no Frieren - Broken upload.zip';
+export const FRIEREN_RAR = 'Sousou no Frieren - Complete.rar';
+export const MOVIE_ZIP = 'Hoshizora no Mukou [Fansub] [BD 1080p].zip';
+const frierenBatch = () =>
+  makeZip([
+    { name: '[SubsPlease] Sousou no Frieren (1080p)/', data: '' },
+    ...[4, 5, 6].map((n) => ({ name: `[SubsPlease] Sousou no Frieren (1080p)/[SubsPlease] Sousou no Frieren - 0${n} (1080p) [ABCD123${n}].ass`, data: assFile(` (episode ${n})`) })),
+    { name: '[SubsPlease] Sousou no Frieren (1080p)/Fonts/NotoSansJP-Regular.otf', data: Buffer.alloc(20_000, 7), store: true },
+    { name: '__MACOSX/[SubsPlease] Sousou no Frieren (1080p)/._[SubsPlease] Sousou no Frieren - 05 (1080p) [ABCD1235].ass', data: 'junk' },
+  ]);
+const frierenOther = () =>
+  makeZip([
+    { name: 'Season 1/E05.srt', data: sjisSrt() },
+    { name: 'Season 1/E06.srt', data: sjisSrt() },
+    { name: sjisName, data: sjisSrt(), descriptor: true },
+    { name: 'Season 1/Notes.txt', data: 'hello' },
+  ]);
+
 const episodeFiles = (id, show, episodes) =>
   episodes.flatMap((n) => {
     const nn = String(n).padStart(2, '0');
@@ -68,7 +99,14 @@ const episodeFiles = (id, show, episodes) =>
   });
 
 export const FILES = {
-  101: [...episodeFiles(101, 'Sousou no Frieren', [1, 2, 3]), file('Sousou no Frieren - All episodes.zip', null, Buffer.from('PK\u0003\u0004'))],
+  101: [
+    ...episodeFiles(101, 'Sousou no Frieren', [1, 2, 3]),
+    file(FRIEREN_BATCH, null, frierenBatch()),
+    file(FRIEREN_OTHER, null, frierenOther()),
+    file(FRIEREN_BROKEN, null, Buffer.from('PK\u0003\u0004 this upload was cut short')), // opens as nothing: the lookup must carry on
+    file(FRIEREN_RAR, null, Buffer.from('Rar!\u001a\u0007\u0001\u0000')), // never opened: only ZIP is read
+  ],
+  106: [file(MOVIE_ZIP, null, makeZip([{ name: 'Hoshizora no Mukou [Fansub].ass', data: assFile(' (movie)') }, { name: 'Hoshizora no Mukou [Fansub].srt', data: srtFile() }, { name: 'Fonts/Mock.ttf', data: Buffer.alloc(500, 1) }]))],
   102: [file('Kimi no Na wa. (2016) [BD 1080p].srt', null, srtFile()), file('Kimi no Na wa. (2016) [BD 1080p].ass', null, assFile())],
   103: [file('Shingeki no Kyojin - 05.srt', 5, srtFile())],
   104: [file('Attack on Titan S02E05.srt', 5, srtFile())],
@@ -126,8 +164,31 @@ function searchEntries(q) {
  */
 export async function startMockUpstream({ acceptKey = (key) => key === VALID_KEY, port = 0 } = {}) {
   const requests = [];
-  const state = { limit: 0, retryAfter: 0, fail: 0, failStatus: 500, delayMs: 0 };
+  const state = { limit: 0, retryAfter: 0, fail: 0, failStatus: 500, delayMs: 0, archivesInFilter: false, ranges: 'on', bytes: 0 };
   let origin = '';
+
+  /** A download, with HTTP Range as a file host does it, unless `state.ranges` says this one does not. */
+  function sendFile(req, res, body) {
+    const wanted = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+    const headers = { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': state.ranges === 'off' ? 'none' : 'bytes' };
+    if (!wanted || state.ranges === 'off') {
+      state.bytes += body.length;
+      res.writeHead(200, headers);
+      return res.end(body);
+    }
+    const [, from, to] = wanted;
+    const start = from === '' ? Math.max(0, body.length - Number(to)) : Number(from);
+    const end = from === '' || to === '' ? body.length - 1 : Math.min(Number(to), body.length - 1);
+    // "-n" for a file shorter than n is the whole file (RFC 9110), though some servers answer 416 instead.
+    const refused = start >= body.length || start > end || (state.ranges === 'suffix-416' && from === '' && Number(to) > body.length);
+    if (refused) {
+      res.writeHead(416, { ...headers, 'Content-Range': `bytes */${body.length}` });
+      return res.end();
+    }
+    state.bytes += end - start + 1;
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${body.length}` });
+    return res.end(body.subarray(start, end + 1));
+  }
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://mock');
@@ -155,7 +216,9 @@ export async function startMockUpstream({ acceptKey = (key) => key === VALID_KEY
         const id = Number(files[1]);
         if (!FILES[id]) return json(res, 404, { error: 'Entry not found', code: 404 }, headers);
         const episode = url.searchParams.get('episode');
-        const list = FILES[id].filter((f) => episode === null || f.episode === null || String(f.episode) === episode);
+        // Whether Jimaku's episode filter keeps an archive that names no episode is not known, so both can be tried.
+        const keeps = (f) => episode === null || String(f.episode) === episode || (f.episode === null && (state.archivesInFilter || !/\.(zip|rar|7z)$/i.test(f.name)));
+        const list = FILES[id].filter(keeps);
         return json(res, 200, list.map((f) => ({ name: f.name, url: `${origin}/entry/${id}/download/${encodeURIComponent(f.name)}`, size: f.body.length, last_modified: '2024-01-01T00:00:00Z' })), headers);
       }
       return json(res, 404, { error: 'No such route', code: 404 });
@@ -214,8 +277,7 @@ export async function startMockUpstream({ acceptKey = (key) => key === VALID_KEY
       if (name === 'broken-name%.srt') return void (res.writeHead(200), res.end(srtFile()));
       const found = (FILES[Number(dl[1])] ?? []).find((f) => f.name === name);
       if (!found) return void (res.writeHead(404, { 'Content-Type': 'text/plain' }), res.end('not found'));
-      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
-      return void res.end(found.body);
+      return void sendFile(req, res, found.body);
     }
     return json(res, 404, { error: 'unknown route' });
   });
@@ -241,6 +303,19 @@ export async function startMockUpstream({ acceptKey = (key) => key === VALID_KEY
     },
     delay(ms) {
       state.delayMs = ms;
+    },
+    /** Whether Jimaku's episode filter keeps ZIPs that name no episode in the list it returns. */
+    archivesInEpisodeFilter(keep) {
+      state.archivesInFilter = keep;
+    },
+    /** How downloads treat Range: 'on', 'off' (ignored: the whole file every time) or 'suffix-416' (refuses "-n" longer than the file). */
+    ranges(mode) {
+      state.ranges = mode;
+    },
+    /** Bytes of files sent so far, and a way to start counting again. */
+    bytesSent: () => state.bytes,
+    resetBytes() {
+      state.bytes = 0;
     },
     /** A config that sends every upstream call here and allows downloads from here. */
     config(env = {}) {

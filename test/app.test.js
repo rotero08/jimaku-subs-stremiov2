@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { FILES, startMockUpstream, VALID_KEY } from '../scripts/mock-upstream.js';
+import { FILES, FRIEREN_BATCH, FRIEREN_BROKEN, FRIEREN_OTHER, startMockUpstream, VALID_KEY } from '../scripts/mock-upstream.js';
 import { clientIp, createApp } from '../src/app.js';
 import { createLogger } from '../src/logger.js';
 import { encodeConfig } from '../src/stremio/userConfig.js';
-import { toToken } from '../src/subs/convert.js';
+import { toMemberToken, toToken } from '../src/subs/convert.js';
 
 describe('the addon over HTTP', () => {
   let mock;
@@ -304,6 +304,53 @@ describe('the addon over HTTP', () => {
       mock.requests.length = 0;
       await addon.get(`/convert/${toToken(`${mock.origin}/jimaku/entries/search`)}.srt`);
       assert.equal(mock.requests.length, 0);
+    });
+
+    describe('files inside ZIP archives', () => {
+      const zipUrl = (name) => `${mock.origin}/entry/101/download/${encodeURIComponent(name)}`;
+      const member = '[SubsPlease] Sousou no Frieren (1080p)/[SubsPlease] Sousou no Frieren - 05 (1080p) [ABCD1235].ass';
+      const memberToken = (name = FRIEREN_BATCH, path = member) => toMemberToken(zipUrl(name), path);
+
+      it('serves a file from inside a ZIP, converted to SRT or as the styled ASS, by the suffix', async () => {
+        const srt = await addon.get(`/convert/${memberToken()}.srt`);
+        assert.equal(srt.status, 200);
+        assert.equal(srt.headers.get('content-type'), 'application/x-subrip; charset=utf-8');
+        assert.match(srt.headers.get('content-disposition'), /\.srt$/);
+        assert.match(await srt.text(), /^1\n00:00:01,000 --> 00:00:03,500\nおはよう、フリーレン。 \(episode 5\)/);
+
+        const ass = await addon.get(`/convert/${memberToken()}.ass`);
+        assert.equal(ass.status, 200);
+        assert.equal(ass.headers.get('content-type'), 'text/x-ssa; charset=utf-8');
+        assert.match(ass.headers.get('content-disposition'), /\.ass$/);
+        assert.match(await ass.text(), /^\[Script Info\]/);
+      });
+
+      it('answers in JSON with the right status when the archive or the file in it is the problem', async () => {
+        const cases = [
+          [`/convert/${memberToken(FRIEREN_BATCH, 'not/there.ass')}.srt`, 404],
+          [`/convert/${memberToken('gone.zip')}.srt`, 404],
+          [`/convert/${memberToken(FRIEREN_BROKEN)}.srt`, 422],
+          [`/convert/${memberToken(FRIEREN_OTHER, 'Season 1/E05.srt')}.ass`, 422],
+          [`/convert/${toMemberToken('http://169.254.169.254/entry/1/download/a.zip', 'a.srt')}.srt`, 403],
+          [`/convert/${Buffer.from('{"u":5}').toString('base64url')}.srt`, 400],
+        ];
+        for (const [path, status] of cases) {
+          const { response, body } = await addon.getJson(path);
+          assert.equal(response.status, status, path.slice(0, 60));
+          assert.equal(typeof body.error, 'string');
+        }
+      });
+
+      it('end to end: an episode that is only in ZIPs is listed, and every address it lists works', async () => {
+        const { body } = await addon.getJson(`/${segment({ assMode: 'both' })}/subtitles/series/kitsu:46474:5.json`);
+        assert.equal(body.subtitles.length, 4);
+        for (const subtitle of body.subtitles) {
+          assert.ok(subtitle.url.startsWith(`${addon.url}/convert/`), subtitle.url.slice(0, 50));
+          const response = await fetch(subtitle.url);
+          assert.equal(response.status, 200, subtitle.label);
+          assert.ok((await response.text()).length > 20, subtitle.label);
+        }
+      });
     });
   });
 

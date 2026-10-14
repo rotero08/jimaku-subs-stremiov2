@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { FILES, startMockUpstream } from '../scripts/mock-upstream.js';
-import { assertDownloadUrl, ConvertError, createConverter, fromToken, toToken } from '../src/subs/convert.js';
+import { FILES, FRIEREN_BATCH, FRIEREN_OTHER, startMockUpstream } from '../scripts/mock-upstream.js';
+import { createArchiveService } from '../src/subs/archive.js';
+import { assertDownloadUrl, ConvertError, createConverter, fromToken, parseToken, toMemberToken, toToken } from '../src/subs/convert.js';
 
 describe('assertDownloadUrl', () => {
   const hosts = ['jimaku.cc'];
@@ -39,6 +40,30 @@ describe('assertDownloadUrl', () => {
   it('round-trips an address through the token', () => {
     assert.equal(fromToken(toToken(ok)), ok);
     assert.match(toToken(ok), /^[A-Za-z0-9_-]+$/);
+  });
+});
+
+describe('tokens', () => {
+  const zip = 'https://jimaku.cc/entry/123/download/Show%20-%20Episodes%2001-12.zip';
+
+  it('carry the address of a file, or of an archive and the path of a file in it', () => {
+    assert.deepEqual(parseToken(toToken('https://jimaku.cc/entry/1/download/a.srt')), { url: 'https://jimaku.cc/entry/1/download/a.srt', member: null });
+    const member = '字幕/[Group] フリーレン - 05 (1080p).ass';
+    const token = toMemberToken(zip, member);
+    assert.match(token, /^[A-Za-z0-9_-]+$/, 'safe in an address');
+    assert.deepEqual(parseToken(token), { url: zip, member });
+  });
+
+  it('still read the tokens made before archives were supported', () => {
+    // exactly what the previous version handed out: base64url of the bare address
+    assert.deepEqual(parseToken('aHR0cHM6Ly9qaW1ha3UuY2MvZW50cnkvMS9kb3dubG9hZC9hLnNydA'), { url: 'https://jimaku.cc/entry/1/download/a.srt', member: null });
+  });
+
+  it('refuse a token that says something else', () => {
+    const wrong = (value) => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
+    for (const bad of ['{not json', { u: zip }, { f: 'a.srt' }, { u: 5, f: 'a.srt' }, { u: zip, f: '' }, { u: zip, f: 'x'.repeat(2000) }, { u: zip, f: ['a'] }]) {
+      assert.throws(() => parseToken(wrong(bad)), (e) => e instanceof ConvertError && e.status === 400, JSON.stringify(bad).slice(0, 40));
+    }
   });
 });
 
@@ -143,5 +168,80 @@ describe('converter', () => {
     } finally {
       FILES[101].pop();
     }
+  });
+});
+
+describe('files inside ZIP archives', () => {
+  let mock;
+  let converter;
+  const zipUrl = (name) => `${mock.origin}/entry/101/download/${encodeURIComponent(name)}`;
+  const batchMember = (n) => `[SubsPlease] Sousou no Frieren (1080p)/[SubsPlease] Sousou no Frieren - 0${n} (1080p) [ABCD123${n}].ass`;
+  const downloads = () => mock.requests.filter((r) => r.service === 'download');
+
+  before(async () => {
+    mock = await startMockUpstream();
+  });
+  after(() => mock.close());
+  beforeEach(() => {
+    mock.requests.length = 0;
+    const config = mock.config();
+    converter = createConverter({ config, archives: createArchiveService({ config }) });
+  });
+
+  it('turns an ASS file in a ZIP into SRT', async () => {
+    const result = await converter.convert({ url: zipUrl(FRIEREN_BATCH), member: batchMember(5) });
+    assert.equal(result.contentType, 'application/x-subrip; charset=utf-8');
+    assert.equal(result.filename, '[SubsPlease] Sousou no Frieren - 05 (1080p) [ABCD1235].srt', 'named after the file, not the folder');
+    assert.match(result.body, /^1\n00:00:01,000 --> 00:00:03,500\nおはよう、フリーレン。 \(episode 5\)\n/);
+  });
+
+  it('decodes a Shift-JIS SRT in a ZIP, found by its Shift-JIS name', async () => {
+    const result = await converter.convert({ url: zipUrl(FRIEREN_OTHER), member: 'Season 1/E05.srt' });
+    assert.match(result.body, /こんにちは、世界。/);
+    const named = await converter.convert({ url: zipUrl(FRIEREN_OTHER), member: 'フリーレン 第05話.srt' });
+    assert.match(named.body, /こんにちは、世界。/);
+    assert.equal(named.filename, 'フリーレン 第05話.srt');
+  });
+
+  it('hands over the ASS itself, in UTF-8, when the player is to have the styles', async () => {
+    const result = await converter.convert({ url: zipUrl(FRIEREN_BATCH), member: batchMember(6) }, { as: 'ass' });
+    assert.equal(result.contentType, 'text/x-ssa; charset=utf-8');
+    assert.match(result.body, /^\[Script Info\]/);
+    assert.match(result.body, /Dialogue: 0,0:00:01.00,0:00:03.50,Default,,0,0,0,,{\\an8}おはよう、フリーレン。 \(episode 6\)/);
+    assert.ok(!result.body.includes('\r'));
+    assert.equal(result.filename, '[SubsPlease] Sousou no Frieren - 06 (1080p) [ABCD1236].ass');
+  });
+
+  it('does not pass an SRT off as ASS', async () => {
+    await assert.rejects(converter.convert({ url: zipUrl(FRIEREN_OTHER), member: 'Season 1/E05.srt' }, { as: 'ass' }), (e) => e instanceof ConvertError && e.status === 422);
+  });
+
+  it('answers 404 for a path that is not in the archive, or is a folder', async () => {
+    for (const member of ['nothing.srt', '[SubsPlease] Sousou no Frieren (1080p)/', 'Season 1/e05.srt']) {
+      await assert.rejects(converter.convert({ url: zipUrl(FRIEREN_BATCH), member }), (e) => e instanceof ConvertError && e.status === 404, member);
+    }
+  });
+
+  it('fetches an archive once for all the files taken from it', async () => {
+    await Promise.all([4, 5, 6].map((n) => converter.convert({ url: zipUrl(FRIEREN_BATCH), member: batchMember(n) })));
+    assert.equal(downloads().length, 1);
+  });
+
+  it('keeps ASS and SRT results of the same file apart', async () => {
+    const source = { url: zipUrl(FRIEREN_BATCH), member: batchMember(5) };
+    const srt = await converter.convert(source);
+    const ass = await converter.convert(source, { as: 'ass' });
+    assert.notEqual(srt.body, ass.body);
+    assert.equal(await converter.convert(source), srt);
+  });
+
+  it('refuses an address off the allowed hosts, before fetching anything', async () => {
+    await assert.rejects(converter.convert({ url: 'https://evil.example/entry/1/download/a.zip', member: 'a.srt' }), (e) => e.status === 403);
+    assert.equal(mock.requests.length, 0);
+  });
+
+  it('says so when this server was built without archive support', async () => {
+    const without = createConverter({ config: mock.config() });
+    await assert.rejects(without.convert({ url: zipUrl(FRIEREN_BATCH), member: batchMember(5) }), (e) => e instanceof ConvertError && e.status === 501);
   });
 });

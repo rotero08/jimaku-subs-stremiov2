@@ -11,6 +11,9 @@ cannot show, so the addon can **convert them to SRT** on the way.
 * **The subtitle made for your release comes first.** If the file you are playing is
   `[SubsPlease] Show - 05 (1080p).mkv`, the subtitle made for that release is at the top of the list: it is the one that stays in sync.
 * **Exact matches.** Anime are found by their AniList id, films and series by their TMDB id; a title search is only the last resort.
+* **Subtitles inside ZIP files work.** Many uploaders pack a whole season into one ZIP, which Stremio cannot open. The addon opens it,
+  picks out the file for the episode you are watching (it reads names like `S02E05`, `- 05`, `第5話`, folders and Shift-JIS file names)
+  and serves it as if it were an ordinary subtitle.
 * **Friendly to Jimaku.** Few requests, answers shared between everybody on the server, and its rate limit is obeyed.
 * **No dependencies at runtime**, one small server, no database. Your key is never stored or logged.
 
@@ -86,7 +89,9 @@ Everything is optional. Set these environment variables:
 | `PUBLISH_TO_CENTRAL` | `false` | `true` announces `BASE_URL/manifest.json` to Stremio's community catalogue at start-up |
 | `UPSTREAM_TIMEOUT_MS` | `6000` | How long to wait for each outside service |
 | `REQUEST_TIMEOUT_MS` | `15000` | After this, a subtitle request is answered with an empty list instead of keeping Stremio waiting |
-| `MAX_SUBTITLE_BYTES` | `4194304` | Largest subtitle file the converter will accept |
+| `MAX_SUBTITLE_BYTES` | `4194304` | Largest subtitle file the converter will accept, also inside a ZIP (packed or not) |
+| `MAX_ARCHIVES` | `3` | Most ZIP files opened to find one episode |
+| `MAX_ARCHIVE_BYTES` | `33554432` | Largest ZIP accepted from a file host that cannot send part of a file (others are read in pieces, whatever their size) |
 | `JIMAKU_MIN_INTERVAL_MS` | `250` | Minimum gap between this server's calls to Jimaku |
 | `VALIDATE_PER_MINUTE` | `20` | How often one visitor may press *Test the key* |
 
@@ -111,9 +116,31 @@ npm run publish-to-stremio -- https://subs.example.com/manifest.json
 2. **Seasons.** Jimaku keeps a separate entry for each season of many shows. Asked for season 2 of such a show, the addon takes the
    entry that says "2nd Season" and nothing else; if Jimaku has no entry for that season the answer is *no subtitles*, never the wrong season's.
 3. **Only if there is no id** (a Kitsu entry with no AniList mapping): a title search, at most two requests, accepting only close matches.
-4. **Which files?** The files of the episode, minus anything Stremio cannot read (ZIP and other archives).
+4. **Which files?** The files of the episode that Stremio can read. When there are none, the entry's ZIP archives are opened
+   and the files for that episode are taken out of them (see below).
 5. **In what order?** The subtitle whose release matches the video's file name (release group, resolution, source) first;
    then plain SRT and VTT, converted ASS, and original ASS. Each has a label such as `SubsPlease · 1080p · ASS→SRT`.
+
+### Subtitles inside ZIP files
+
+Jimaku's episode filter can only offer files that name their episode, so a season uploaded as one ZIP is easy to miss. When an
+episode has no file of its own, the addon looks at the entry's ZIP files:
+
+* **Which archives.** Those whose names do not rule the episode out: `Show S01 (BD).zip` and `Show Complete.zip` are candidates,
+  `Show 13-24.zip` is not when you are watching episode 5, and `Show - 05.zip` goes first. At most three are opened, the most likely first.
+  Jimaku may or may not keep unnamed archives out of an episode's list, so if none came with it the entry's whole list is asked for (once, then remembered).
+* **Reading one.** The end of a ZIP says what it holds, so the addon asks the file host for just that (an HTTP `Range` request) and later for the
+  packed bytes of the one file it wants, never the whole archive and its fonts. A host that ignores `Range` sends the whole file, which is used if it is
+  under `MAX_ARCHIVE_BYTES`. Names in UTF-8, Shift-JIS (what a Japanese Windows writes) and with an Info-ZIP Unicode field are read; folders, `__MACOSX` junk
+  and fonts are skipped.
+* **Which file.** The episode comes from the file's name (`S02E05`, `E05`, `Episode 5`, `第5話`, `#05`, `- 05`, `[05]`, a trailing `05`), else from the folder it is in, else, for a
+  lone file, from the archive's name. A file that names another season is left out. When nothing says which episode a file is for, it is not offered: a subtitle for the wrong episode is worse than none.
+  Films get every subtitle file in the ZIP.
+* **Serving it.** Stremio is given an address on this server (`/convert/<token>.srt`, `.vtt` or `.ass`) that names the archive and the path in it, so nothing is
+  stored: ASS is converted as usual, and a file in a ZIP can be offered as the styled ASS too.
+* **Safe by construction.** Archives are never unpacked to disk, only one file is ever inflated and only up to `MAX_SUBTITLE_BYTES`
+  (an archive that lies about a size cannot make it inflate more), encrypted, ZIP64 and exotic-compression files are skipped, the file's checksum is verified, and the
+  archive's address must be a Jimaku download on an allowed host, like any other. A directory is remembered for half an hour, a broken archive for ten minutes.
 
 ### ASS subtitles
 
@@ -157,6 +184,7 @@ npm run dev            # against the real services, restarting on changes
 
 `npm run dev:mock` needs no Jimaku account: any key of 8+ characters works, except one that starts with `bad` (to see the rejected-key message).
 It knows Frieren (`kitsu:46474`, `tt22248376`), *Your Name.* (`tt5311514`) and Attack on Titan (`tt2560140`); the output tells you what to try.
+Frieren's episodes 4 to 6 exist only inside ZIP files there (`kitsu:46474:5`), and a film does too (`anilist:99106` as a movie), so the demo shows archives at work.
 
 ```
 src/
@@ -165,16 +193,18 @@ src/
   jimaku/           the Jimaku API client; matching titles, seasons, releases
   meta/             Kitsu, AniList, Cinemeta
   stremio/          manifest, ids, the user's settings, the subtitle lookup
-  subs/             ASS parser and SRT writer, text encodings, the safe converter
+  subs/             ASS parser and SRT writer, text encodings, the safe converter, ZIP reader and archive fetching
 public/             the setup page (no inline script or style, nothing loaded from other sites)
-scripts/            the pretend upstream for tests and demos, and the publish script
+scripts/            the pretend upstream for tests and demos (with a small ZIP writer), and the publish script
 ```
 
 The setup page is served with a strict Content-Security-Policy (`default-src 'none'`, scripts and styles from the same origin only).
 
 ### Limits
 
-* Subtitles that Jimaku only offers inside archives (ZIP, RAR) cannot be shown; Stremio does not open archives.
+* Only **ZIP** archives are opened. RAR and 7z need decompressors that this dependency-free server does not carry, so subtitles that exist only in those are not shown.
+  ZIP64 (over 4 GB), password-protected and split archives are not read either.
+* A ZIP is only consulted when the episode has no file of its own, and only the first three likely archives of an entry are tried.
 * SRT and VTT files are handed to Stremio as they are, so a file saved in an old Japanese encoding depends on the app to decode it. ASS files are always converted to UTF-8.
 * Which episode a file belongs to is Jimaku's own best guess; the addon trusts it, and drops files that name another season.
 

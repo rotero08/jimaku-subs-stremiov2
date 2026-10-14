@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { startMockUpstream, VALID_KEY } from '../scripts/mock-upstream.js';
+import { FRIEREN_BATCH, FRIEREN_OTHER, FRIEREN_RAR, FRIEREN_BROKEN, MOVIE_ZIP, startMockUpstream, VALID_KEY } from '../scripts/mock-upstream.js';
 import { createJimakuClient } from '../src/jimaku/client.js';
 import { silentLogger } from '../src/logger.js';
 import { createAniList } from '../src/meta/anilist.js';
 import { createCinemeta } from '../src/meta/cinemeta.js';
 import { createKitsu } from '../src/meta/kitsu.js';
-import { buildSubtitles, createSubtitleService } from '../src/stremio/subtitles.js';
-import { fromToken } from '../src/subs/convert.js';
+import { buildArchiveSubtitles, buildSubtitles, createSubtitleService } from '../src/stremio/subtitles.js';
+import { createArchiveService } from '../src/subs/archive.js';
+import { fromToken, parseToken } from '../src/subs/convert.js';
 
 const BASE = 'https://addon.example';
 const entry = { id: 7 };
@@ -77,6 +78,52 @@ describe('buildSubtitles', () => {
   });
 });
 
+describe('buildArchiveSubtitles', () => {
+  const archive = { name: '[SubsPlease] Show (BD 1080p).zip', url: 'https://jimaku.cc/entry/7/download/pack.zip' };
+  const members = [{ path: 'Show/Show - 05.ass' }, { path: 'Show/[Erai-raws] Show - 05.srt' }, { path: 'Show/Show - 05.vtt' }];
+  const build = (extra = {}) => buildArchiveSubtitles({ entry, found: [{ archive, members }], assMode: 'srt', baseUrl: BASE, ...extra });
+  const sourceOf = (subtitle) => parseToken(subtitle.url.slice(`${BASE}/convert/`.length).replace(/\.(srt|vtt|ass)$/, ''));
+
+  it('serves every file itself, naming the archive and the path in it', () => {
+    const subs = build();
+    assert.equal(subs.length, 3);
+    for (const s of subs) {
+      assert.match(s.url, /^https:\/\/addon\.example\/convert\/[A-Za-z0-9_-]+\.(srt|vtt)$/);
+      assert.equal(sourceOf(s).url, archive.url);
+    }
+    assert.deepEqual(subs.map((s) => s.url.split('.').pop()).sort(), ['srt', 'srt', 'vtt']);
+  });
+
+  it('labels a file with the group of the archive when its own name has none', () => {
+    assert.deepEqual(build().map((s) => s.label), ['Erai-raws · SRT', 'SubsPlease · VTT', 'SubsPlease · ASS→SRT']);
+  });
+
+  it('takes the group from the first bracket that is not a format or a resolution', () => {
+    const labels = (name) => build({ found: [{ archive: { ...archive, name }, members }] }).map((s) => s.label);
+    assert.ok(labels('Show Season 1 [Fansub] [SRT].zip').includes('Fansub · VTT'));
+    assert.ok(labels('Show [1080p] [BD] [ABCD1234] [Zed].zip').includes('Zed · VTT'));
+    assert.ok(labels('Show [ASS].zip').includes('Show - 05 · VTT'), 'no group to be had: the file name stands alone');
+  });
+
+  it('gives ids that stay the same, tell archives apart, and number repeated labels', () => {
+    assert.deepEqual(build().map((s) => s.id), build().map((s) => s.id));
+    const other = build({ found: [{ archive: { ...archive, name: 'Elsewhere.zip' }, members }] });
+    assert.ok(build().every((s) => !other.some((o) => o.id === s.id)));
+    const twins = buildArchiveSubtitles({ entry, found: [{ archive, members: [{ path: 'a/Show - 05.srt' }, { path: 'b/Show - 05.srt' }] }], assMode: 'srt', baseUrl: BASE });
+    assert.deepEqual(twins.map((s) => s.label), ['SubsPlease · SRT', 'SubsPlease · SRT (2)']);
+  });
+
+  it('orders the files of several archives together: the same release first, then plain SRT before converted ASS', () => {
+    const found = [
+      { archive: { name: '[GroupA] Show.zip', url: 'https://jimaku.cc/entry/7/download/a.zip' }, members: [{ path: 'Show - 05.ass' }] },
+      { archive: { name: '[GroupB] Show.zip', url: 'https://jimaku.cc/entry/7/download/b.zip' }, members: [{ path: 'Show - 05.srt' }] },
+    ];
+    const labels = (videoName) => buildArchiveSubtitles({ entry, found, assMode: 'srt', baseUrl: BASE, videoName }).map((s) => s.label);
+    assert.deepEqual(labels(undefined), ['GroupB · SRT', 'GroupA · ASS→SRT']);
+    assert.deepEqual(labels('[GroupA] Show - 05 (1080p).mkv'), ['GroupA · ASS→SRT', 'GroupB · SRT']);
+  });
+});
+
 describe('subtitle service', () => {
   let mock;
   let service;
@@ -97,12 +144,14 @@ describe('subtitle service', () => {
     mock.requests.length = 0;
     mock.limitNext(0, 0);
     mock.failNext(500, 0);
+    mock.archivesInEpisodeFilter(false);
     service = createSubtitleService({
       config: c,
       jimaku: createJimakuClient({ config: c, sleep: async () => {} }),
       kitsu: createKitsu({ config: c }),
       anilist: createAniList({ config: c }),
       cinemeta: createCinemeta({ config: c }),
+      archives: createArchiveService({ config: c }),
       logger: silentLogger,
     });
   });
@@ -127,7 +176,7 @@ describe('subtitle service', () => {
 
     it('does not search by title when the id is exact, even when the entry has nothing yet', async () => {
       const result = await ask('anime', 'kitsu:46474:99');
-      assert.equal(result.subtitles.length, 0, 'the .zip is not a subtitle, and no other file names episode 99');
+      assert.equal(result.subtitles.length, 0, 'no file names episode 99, and no archive holds it');
       assert.ok(!jimakuCalls().some((r) => r.query.query), 'no title search');
     });
 
@@ -192,6 +241,109 @@ describe('subtitle service', () => {
 
     it('a cartoon that is not on Jimaku gives nothing', async () => {
       assert.deepEqual(await ask('series', 'tt9990002:1:1'), { subtitles: [], cacheMaxAge: 600 });
+    });
+  });
+
+  describe('episodes that Jimaku has only inside ZIP files', () => {
+    const downloads = () => mock.requests.filter((r) => r.service === 'download');
+    const downloaded = (name) => downloads().some((r) => decodeURIComponent(r.path).endsWith(`/${name}`));
+    const filesCalls = () => jimakuCalls().filter((r) => r.path.endsWith('/files'));
+    const sourceOf = (subtitle) => parseToken(subtitle.url.slice(`${BASE}/convert/`.length).replace(/\.(srt|vtt|ass)$/, ''));
+
+    for (const keeps of [false, true]) {
+      describe(`when Jimaku's episode filter ${keeps ? 'keeps' : 'leaves out'} archives`, () => {
+        beforeEach(() => mock.archivesInEpisodeFilter(keeps));
+
+        it('finds the episode inside the archives, whoever made them and however they name it', async () => {
+          const result = await ask('anime', 'kitsu:46474:5');
+          assert.deepEqual(names(result), ['Fansub · SRT', 'Fansub · SRT (2)', 'SubsPlease · 1080p · ASS→SRT']);
+          assert.equal(result.cacheMaxAge, 900);
+          assert.ok(result.subtitles.every((s) => /^https:\/\/addon\.example\/convert\/[A-Za-z0-9_-]+\.srt$/.test(s.url)), 'all served by this server');
+          assert.equal(new Set(result.subtitles.map((s) => s.id)).size, 3);
+          assert.ok(result.subtitles.every((s) => /^jimaku-101-[0-9a-f]{10}(-srt)?$/.test(s.id) && s.lang === 'jpn'));
+
+          const members = result.subtitles.map((s) => sourceOf(s).member);
+          assert.deepEqual(members, ['Season 1/E05.srt', 'フリーレン 第05話.srt', '[SubsPlease] Sousou no Frieren (1080p)/[SubsPlease] Sousou no Frieren - 05 (1080p) [ABCD1235].ass']);
+          assert.match(sourceOf(result.subtitles[2]).url, /\/entry\/101\/download\/Sousou%20no%20Frieren%20%5BSubsPlease%5D%20-%20Episodes%2004-06/);
+        });
+
+        it(keeps ? 'needs no second list from Jimaku' : 'asks Jimaku for the entry’s whole list, once', async () => {
+          await ask('anime', 'kitsu:46474:5');
+          const calls = filesCalls();
+          assert.deepEqual(calls.map((r) => r.query.episode ?? 'all'), keeps ? ['5'] : ['5', 'all']);
+        });
+
+        it('takes only the files of the episode asked for', async () => {
+          assert.deepEqual(names(await ask('anime', 'kitsu:46474:4')), ['SubsPlease · 1080p · ASS→SRT']);
+          const six = await ask('anime', 'kitsu:46474:6');
+          assert.deepEqual(six.subtitles.map((s) => sourceOf(s).member.split('/').pop()), ['E06.srt', '[SubsPlease] Sousou no Frieren - 06 (1080p) [ABCD1236].ass']);
+        });
+
+        it('gives nothing, for a shorter while, when no archive has the episode', async () => {
+          const result = await ask('anime', 'kitsu:46474:7');
+          assert.deepEqual(result, { subtitles: [], cacheMaxAge: 120 });
+        });
+      });
+    }
+
+    it('does not open an archive when the episode has files of its own', async () => {
+      assert.equal((await ask('anime', 'kitsu:46474:2')).subtitles.length, 3);
+      assert.equal(downloads().length, 0);
+      assert.equal(filesCalls().length, 1);
+    });
+
+    it('does not open an archive whose name says it is for other episodes, nor a RAR', async () => {
+      await ask('anime', 'kitsu:46474:9'); // the batch is "Episodes 04-06"
+      assert.ok(!downloaded(FRIEREN_BATCH));
+      assert.ok(!downloaded(FRIEREN_RAR), 'only ZIP is read');
+      assert.ok(downloaded(FRIEREN_OTHER), 'one that names no episodes may hold it');
+    });
+
+    it('carries on past an archive that cannot be opened', async () => {
+      const result = await ask('anime', 'kitsu:46474:5');
+      assert.ok(downloaded(FRIEREN_BROKEN), 'it was tried');
+      assert.equal(result.subtitles.length, 3);
+    });
+
+    it('opens no more archives than it is allowed to, the most likely first', async () => {
+      const c = mock.config({ MAX_ARCHIVES: '1' });
+      const careful = createSubtitleService({ config: c, jimaku: createJimakuClient({ config: c, sleep: async () => {} }), kitsu: createKitsu({ config: c }), anilist: createAniList({ config: c }), cinemeta: createCinemeta({ config: c }), archives: createArchiveService({ config: c }), logger: silentLogger });
+      const result = await careful.getSubtitles({ type: 'anime', id: 'kitsu:46474:5', user: user(), baseUrl: BASE });
+      assert.equal(downloads().length, 1);
+      assert.ok(downloaded(FRIEREN_BATCH), 'the one whose range covers the episode');
+      assert.deepEqual(names(result), ['SubsPlease · 1080p · ASS→SRT']);
+    });
+
+    it('offers the styled file too, served by this server, when asked', async () => {
+      const both = await ask('anime', 'kitsu:46474:5', { user: user({ assMode: 'both' }) });
+      assert.deepEqual(names(both), ['Fansub · SRT', 'Fansub · SRT (2)', 'SubsPlease · 1080p · ASS→SRT', 'SubsPlease · 1080p · ASS']);
+      const styled = both.subtitles.find((s) => s.id.endsWith('-ass'));
+      assert.match(styled.url, /^https:\/\/addon\.example\/convert\/[A-Za-z0-9_-]+\.ass$/);
+      assert.equal(sourceOf(styled).member, sourceOf(both.subtitles[2]).member);
+
+      const ass = await ask('anime', 'kitsu:46474:5', { user: user({ assMode: 'ass' }) });
+      assert.deepEqual(names(ass), ['Fansub · SRT', 'Fansub · SRT (2)', 'SubsPlease · 1080p · ASS']);
+    });
+
+    it('puts the subtitle made for the same release first, whichever archive it is in', async () => {
+      const subsplease = await ask('anime', 'kitsu:46474:5', { extra: { filename: '[SubsPlease] Sousou no Frieren - 05 (1080p) [A1B2C3D4].mkv' } });
+      assert.equal(names(subsplease)[0], 'SubsPlease · 1080p · ASS→SRT');
+      const fansub = await ask('anime', 'kitsu:46474:5', { extra: { filename: '[Fansub] Sousou no Frieren - 05 [BD 1080p].mkv' } });
+      assert.match(names(fansub)[0], /^Fansub/);
+    });
+
+    it('finds a film whose subtitles are only in a ZIP, and takes every subtitle file in it', async () => {
+      const result = await ask('movie', 'anilist:99106');
+      assert.deepEqual(names(result), ['Fansub · SRT', 'Fansub · ASS→SRT']);
+      assert.deepEqual(result.subtitles.map((s) => sourceOf(s).member), ['Hoshizora no Mukou [Fansub].srt', 'Hoshizora no Mukou [Fansub].ass']);
+      assert.equal(downloads().length, 1);
+      assert.ok(downloaded(MOVIE_ZIP));
+      assert.deepEqual(filesCalls().map((r) => 'episode' in r.query), [false], 'a film is asked for once');
+    });
+
+    it('works through an IMDb id too, with the season it was asked for', async () => {
+      const result = await ask('series', 'tt22248376:1:5');
+      assert.deepEqual(names(result), ['Fansub · SRT', 'Fansub · SRT (2)', 'SubsPlease · 1080p · ASS→SRT']);
     });
   });
 

@@ -29,6 +29,26 @@ const safeDecode = (text) => {
 export const toToken = (url) => Buffer.from(url, 'utf8').toString('base64url');
 export const fromToken = (token) => Buffer.from(token, 'base64url').toString('utf8');
 
+/** The token for one file inside a ZIP: the archive's address and the file's path in it. */
+export const toMemberToken = (url, member) => Buffer.from(JSON.stringify({ u: url, f: member }), 'utf8').toString('base64url');
+
+/**
+ * What a token stands for: a Jimaku file ({ url }) or a file inside a ZIP ({ url, member }).
+ * Tokens made before archives were supported are the bare address, and still work.
+ */
+export function parseToken(token) {
+  const text = fromToken(token);
+  if (!text.startsWith('{')) return { url: text, member: null };
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new ConvertError('that address is not valid');
+  }
+  if (typeof data?.u !== 'string' || typeof data?.f !== 'string' || !data.f || data.f.length > 1024) throw new ConvertError('that address is not valid');
+  return { url: data.u, member: data.f };
+}
+
 /** Throws unless `value` is a Jimaku download address on an allowed host. */
 export function assertDownloadUrl(value, allowedHosts) {
   let url;
@@ -48,7 +68,11 @@ export function assertDownloadUrl(value, allowedHosts) {
   return url;
 }
 
-export function createConverter({ config, fetchImpl = globalThis.fetch, logger }) {
+/**
+ * @param {object} options
+ * @param {ReturnType<import('./archive.js').createArchiveService>} [options.archives]   to read files inside ZIPs
+ */
+export function createConverter({ config, fetchImpl = globalThis.fetch, logger, archives }) {
   const cache = new TtlCache({ maxEntries: 400, maxWeight: 24 * 1024 * 1024, weigh: (v) => v.body.length });
   const hostAllowed = (url) => {
     try {
@@ -58,7 +82,8 @@ export function createConverter({ config, fetchImpl = globalThis.fetch, logger }
     }
   };
 
-  async function load(url) {
+  /** The file's bytes from Jimaku, and its name. */
+  async function download(url) {
     const result = await request(fetchImpl, url, {
       headers: { 'User-Agent': config.userAgent },
       timeoutMs: config.limits.upstreamTimeoutMs + 2000,
@@ -69,15 +94,29 @@ export function createConverter({ config, fetchImpl = globalThis.fetch, logger }
     });
     if (result.status === 404) throw new ConvertError('that file no longer exists', 404);
     if (result.status !== 200) throw new ConvertError(`Jimaku answered ${result.status}`, 502);
+    return { bytes: result.body, name: safeDecode(new URL(url).pathname.split('/').pop()) };
+  }
 
-    const { text, encoding } = decodeSubtitle(result.body);
-    const name = safeDecode(new URL(url).pathname.split('/').pop());
+  /** The bytes of one file inside a ZIP, and its name. */
+  async function unpack(url, member) {
+    if (!archives) throw new ConvertError('archives are not supported here', 501);
+    const archive = await archives.open(url);
+    const entry = archive.entries.find((candidate) => candidate.path === member && !candidate.directory);
+    if (!entry) throw new ConvertError('that file is not in the archive', 404);
+    return { bytes: await archives.read(archive, entry), name: member.split('/').pop() };
+  }
+
+  /** Decodes a subtitle file and writes it as UTF-8: SRT or VTT, or ASS itself when `keepAss`. */
+  function render({ bytes, name }, { keepAss }) {
+    const { text, encoding } = decodeSubtitle(bytes);
     const isAss = /\.(ass|ssa)$/i.test(name) || looksLikeAss(text);
-    const body = isAss ? assToSrt(text) : text.replace(/\r\n?/g, '\n');
+    if (keepAss && !isAss) throw new ConvertError('that file is not an ASS file', 422);
+    const body = isAss && !keepAss ? assToSrt(text) : text.replace(/\r\n?/g, '\n');
     if (!body.trim()) throw new ConvertError('that file holds no subtitles', 422);
 
     const vtt = !isAss && /^\s*WEBVTT/.test(body);
-    logger?.debug('converted subtitle', { name, encoding, from: isAss ? 'ass' : vtt ? 'vtt' : 'srt', bytes: result.body.length });
+    logger?.debug('converted subtitle', { name, encoding, from: isAss ? 'ass' : vtt ? 'vtt' : 'srt', bytes: bytes.length });
+    if (keepAss) return { body, contentType: 'text/x-ssa; charset=utf-8', filename: name };
     return {
       body,
       contentType: vtt ? 'text/vtt; charset=utf-8' : 'application/x-subrip; charset=utf-8',
@@ -86,9 +125,17 @@ export function createConverter({ config, fetchImpl = globalThis.fetch, logger }
   }
 
   return {
-    async convert(url) {
+    /**
+     * @param {string | { url: string, member?: string | null }} source   a Jimaku download address, or one and the path of a file inside it
+     * @param {{ as?: 'srt' | 'vtt' | 'ass' }} [options]   `ass` returns an ASS file as it is (decoded to UTF-8), the others convert
+     */
+    async convert(source, { as } = {}) {
+      const { url, member = null } = typeof source === 'string' ? { url: source } : source;
       const checked = assertDownloadUrl(url, config.downloadHosts);
-      return cache.wrap(checked.href, 6 * 3600_000, () => load(checked.href));
+      const keepAss = as === 'ass';
+      return cache.wrap(`${checked.href}#${member ?? ''}#${keepAss ? 'ass' : ''}`, 6 * 3600_000, async () =>
+        render(member === null ? await download(checked.href) : await unpack(checked.href, member), { keepAss }),
+      );
     },
   };
 }

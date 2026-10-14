@@ -28,9 +28,11 @@ Jimaku Subtitles in demo mode: nothing here touches the real Jimaku.
   Addon         ${origin}/${demo}/manifest.json
   Try it        curl '${origin}/${demo}/subtitles/series/kitsu:46474:2.json'
                 curl '${origin}/${demo}/subtitles/movie/tt5311514.json'
+                curl '${origin}/${demo}/subtitles/series/kitsu:46474:5.json'    (episode 5 is only inside ZIP files)
 
   Any API key of 8+ characters works, except one starting with "bad".
   Known demo titles: Frieren (kitsu:46474, tt22248376), Your Name. (tt5311514), Attack on Titan (tt2560140).
+  Only inside ZIP files: Frieren episodes 4 to 6, and the film anilist:99106 (as a movie).
 `);
 });
 

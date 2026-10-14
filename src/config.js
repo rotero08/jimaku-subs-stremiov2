@@ -47,6 +47,10 @@ export function loadConfig(env = process.env) {
       upstreamTimeoutMs: int(env.UPSTREAM_TIMEOUT_MS, 6000),
       requestTimeoutMs: int(env.REQUEST_TIMEOUT_MS, 15000),
       maxSubtitleBytes: int(env.MAX_SUBTITLE_BYTES, 4 * 1024 * 1024),
+      // ZIP archives are read in pieces, so this only bounds an archive that a server hands over whole.
+      maxArchiveBytes: int(env.MAX_ARCHIVE_BYTES, 32 * 1024 * 1024),
+      // Most archives opened to find one episode, per lookup.
+      maxArchives: int(env.MAX_ARCHIVES, 3),
       // Jimaku allows few requests per window and shares them across everyone on this server.
       jimakuMinIntervalMs: int(env.JIMAKU_MIN_INTERVAL_MS, 250),
       jimakuMaxWaitMs: int(env.JIMAKU_MAX_WAIT_MS, 4000),

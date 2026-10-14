@@ -4,16 +4,56 @@
 //      found, by title only as a last resort.
 //   2. Take that entry's files for the episode, keep the ones Stremio can show, order them so the
 //      subtitle made for the same release as the video comes first.
-//   3. Answer in Stremio's format, with a label for the picker.
+//   3. When the episode has no such file, look inside the entry's ZIP archives: subtitles are often
+//      uploaded as a ZIP of a whole season, and Stremio cannot open those, so this server does.
+//   4. Answer in Stremio's format, with a label for the picker.
 
 import { createHash } from 'node:crypto';
+import { archiveFit, membersFor } from '../jimaku/episodes.js';
 import { InvalidKeyError, RateLimitedError } from '../jimaku/client.js';
-import { entriesForSeason, fileKind, filterBySeason, labelFor, rankEntries, releaseSimilarity } from '../jimaku/match.js';
-import { toToken } from '../subs/convert.js';
+import { entriesForSeason, fileKind, filterBySeason, labelFor, rankEntries, releaseGroup, releaseSimilarity } from '../jimaku/match.js';
+import { toMemberToken, toToken } from '../subs/convert.js';
 import { parseVideoId } from './ids.js';
 
 const shortHash = (text) => createHash('sha1').update(text).digest('hex').slice(0, 10);
 const empty = (cacheMaxAge) => ({ subtitles: [], cacheMaxAge });
+
+/**
+ * Turns candidate files into Stremio subtitle objects, best first.
+ *
+ * A candidate is `{ name, idKey, url, token, context? }`: what to call it, what its id is made from,
+ * where Stremio can fetch it as it is (null for a file inside a ZIP, which only this server can
+ * serve), what /convert/ needs to find it, and any more text that says what release it is from (the
+ * name of the ZIP it is in).
+ */
+function subtitleItems(candidates, { entryId, assMode, baseUrl, videoName }) {
+  const items = [];
+  for (const candidate of candidates) {
+    const kind = fileKind(candidate.name);
+    if (!['srt', 'vtt', 'ass', 'ssa'].includes(kind)) continue; // archives and anything else
+    const id = `jimaku-${entryId}-${shortHash(candidate.idKey)}`;
+    const match = releaseSimilarity(videoName, candidate.context ? `${candidate.name} ${candidate.context}` : candidate.name);
+    const served = (extension) => `${baseUrl}/convert/${candidate.token}.${extension}`;
+    const item = (rank, suffix, url, label) => items.push({ match, rank, name: candidate.name, subtitle: { id: `${id}${suffix}`, url, lang: 'jpn', label } });
+
+    if (kind === 'srt' || kind === 'vtt') {
+      item(0, '', candidate.url ?? served(kind), labelFor(candidate.name));
+      continue;
+    }
+    if (assMode === 'srt' || assMode === 'both') item(1, '-srt', served('srt'), labelFor(candidate.name, { converted: true }));
+    if (assMode === 'ass' || assMode === 'both') item(2, '-ass', candidate.url ?? served('ass'), labelFor(candidate.name));
+  }
+  // Same release first; then plain SRT (no conversion), converted ASS, original ASS; then by name.
+  items.sort((a, b) => b.match - a.match || a.rank - b.rank || a.name.localeCompare(b.name, 'en', { numeric: true }));
+
+  // Two files can have the same label ("Fansub · SRT"): number the later ones so the picker can tell them apart.
+  const seen = new Map();
+  return items.map(({ subtitle }) => {
+    const times = (seen.get(subtitle.label) ?? 0) + 1;
+    seen.set(subtitle.label, times);
+    return times === 1 ? subtitle : { ...subtitle, label: `${subtitle.label} (${times})` };
+  });
+}
 
 /**
  * Turns an entry's files into Stremio subtitle objects, best first.
@@ -26,31 +66,48 @@ const empty = (cacheMaxAge) => ({ subtitles: [], cacheMaxAge });
  * @param {string} [options.videoName]                the file being played, to match its release
  */
 export function buildSubtitles({ entry, files, assMode, baseUrl, videoName }) {
-  const items = [];
-  for (const file of files) {
-    const kind = fileKind(file.name);
-    if (!['srt', 'vtt', 'ass', 'ssa'].includes(kind)) continue; // archives and anything else
-    const id = `jimaku-${entry.id}-${shortHash(file.name)}`;
-    const match = releaseSimilarity(videoName, file.name);
-
-    if (kind === 'srt' || kind === 'vtt') {
-      items.push({ match, rank: 0, name: file.name, subtitle: { id, url: file.url, lang: 'jpn', label: labelFor(file.name) } });
-      continue;
-    }
-    if (assMode === 'srt' || assMode === 'both') {
-      const url = `${baseUrl}/convert/${toToken(file.url)}.srt`;
-      items.push({ match, rank: 1, name: file.name, subtitle: { id: `${id}-srt`, url, lang: 'jpn', label: labelFor(file.name, { converted: true }) } });
-    }
-    if (assMode === 'ass' || assMode === 'both') {
-      items.push({ match, rank: 2, name: file.name, subtitle: { id: `${id}-ass`, url: file.url, lang: 'jpn', label: labelFor(file.name) } });
-    }
-  }
-  // Same release first; then plain SRT (no conversion), converted ASS, original ASS; then by name.
-  items.sort((a, b) => b.match - a.match || a.rank - b.rank || a.name.localeCompare(b.name, 'en', { numeric: true }));
-  return items.map((item) => item.subtitle);
+  const candidates = files.map((file) => ({ name: file.name, idKey: file.name, url: file.url, token: toToken(file.url) }));
+  return subtitleItems(candidates, { entryId: entry.id, assMode, baseUrl, videoName });
 }
 
-export function createSubtitleService({ config, jimaku, kitsu, anilist, cinemeta, logger }) {
+// Brackets in a name that say what kind of release it is, not who made it.
+const NOT_A_GROUP = /^(?:ass|ssa|srt|vtt|zip|batch|complete|bd|bdrip|web|webrip|sub|subs|japanese|jp|ja|jpn|v\d|\d{3,4}p|[0-9a-f]{8})$/i;
+
+/** Who made an archive: the leading [group], or else the first bracket that is not a format or a resolution. */
+function groupOfArchive(name) {
+  const leading = releaseGroup(name);
+  if (leading) return leading;
+  for (const [, tag] of name.matchAll(/\[([^\]]{2,30})\]/g)) if (!NOT_A_GROUP.test(tag.trim())) return tag.trim();
+  return null;
+}
+
+/**
+ * The same for files found inside ZIP archives: all of them are served by this server, by the
+ * archive's address and their path in it, and all are ordered together, whichever archive they came from.
+ *
+ * @param {object} options
+ * @param {{ id: number }} options.entry
+ * @param {{ archive: { name: string, url: string }, members: { path: string }[] }[]} options.found   each ZIP as Jimaku lists it, and the files in it to offer
+ */
+export function buildArchiveSubtitles({ entry, found, assMode, baseUrl, videoName }) {
+  const candidates = found.flatMap(({ archive, members }) => {
+    const group = groupOfArchive(archive.name);
+    return members.map((member) => {
+      const base = member.path.split('/').pop();
+      // The files of a batch often leave out the release group that the archive is named for.
+      return {
+        name: group && !releaseGroup(base) ? `[${group}] ${base}` : base,
+        idKey: `${archive.name}/${member.path}`,
+        url: null,
+        token: toMemberToken(archive.url, member.path),
+        context: archive.name.replace(/\.zip$/i, ''),
+      };
+    });
+  });
+  return subtitleItems(candidates, { entryId: entry.id, assMode, baseUrl, videoName });
+}
+
+export function createSubtitleService({ config, jimaku, kitsu, anilist, cinemeta, archives = null, logger }) {
   const byAnilistId = async (anilistId, key) =>
     (await jimaku.searchByAnilist(anilistId, key)).map((entry) => ({ entry, via: 'anilist' }));
 
@@ -111,6 +168,43 @@ export function createSubtitleService({ config, jimaku, kitsu, anilist, cinemeta
   }
 
   /**
+   * Subtitles for an episode that Jimaku has only inside ZIP files. Jimaku's episode filter may leave
+   * archives out of `files` (a batch is not "episode 5"), so when none came with them the entry's whole
+   * list is asked for. Archives whose names rule the episode out are not opened, and no more than a
+   * few are: each one costs a request or two to the file host.
+   */
+  async function fromArchives({ entry, via, files, episode, movie, season, key, assMode, baseUrl, videoName }) {
+    if (!archives || (!movie && episode === null)) return [];
+    const isZip = (file) => /\.zip$/i.test(file.name);
+    let zips = files.filter(isZip);
+    if (!zips.length && !movie) {
+      const everything = await jimaku.files(entry.id, null, key);
+      zips = (via === 'anilist' ? everything : filterBySeason(everything, season)).filter(isZip);
+    }
+
+    // An AniList entry is one season already, so its files' seasons are not held against it.
+    const wanted = { episode, season: via === 'anilist' ? null : season, movie };
+    const chosen = zips
+      .map((file) => ({ file, fit: archiveFit(file.name, wanted), match: releaseSimilarity(videoName, file.name) }))
+      .filter(({ fit }) => fit > 0)
+      .sort((a, b) => b.fit - a.fit || b.match - a.match || a.file.name.localeCompare(b.file.name, 'en', { numeric: true }))
+      .slice(0, config.limits.maxArchives);
+
+    const found = await Promise.all(
+      chosen.map(async ({ file }) => {
+        try {
+          const archive = await archives.open(file.url);
+          return { archive: file, members: membersFor(archive.entries, { ...wanted, archiveName: file.name }) };
+        } catch (error) {
+          logger?.info('could not use an archive', { entry: entry.id, error: error.message });
+          return null;
+        }
+      }),
+    );
+    return buildArchiveSubtitles({ entry, found: found.filter(Boolean), assMode, baseUrl, videoName });
+  }
+
+  /**
    * @param {object} request
    * @param {string} request.type
    * @param {string} request.id
@@ -136,11 +230,16 @@ export function createSubtitleService({ config, jimaku, kitsu, anilist, cinemeta
 
       const subtitles = [];
       for (const { entry, via } of candidates) {
-        const episode = entry.movie || parsed.movie ? null : parsed.episode;
+        const movie = Boolean(entry.movie || parsed.movie);
+        const episode = movie ? null : parsed.episode;
         let files = await jimaku.files(entry.id, episode, key);
         // A TMDB or title match covers a whole show; an AniList entry is already one season.
         if (via !== 'anilist') files = filterBySeason(files, parsed.season);
-        subtitles.push(...buildSubtitles({ entry, files, assMode, baseUrl, videoName: extra.filename }));
+        const options = { entry, assMode, baseUrl, videoName: extra.filename };
+        let found = buildSubtitles({ ...options, files });
+        // Nothing Stremio can open for this episode: it may be in a ZIP.
+        if (!found.length) found = await fromArchives({ ...options, via, files, episode, movie, season: parsed.season, key });
+        subtitles.push(...found);
       }
       const unique = [...new Map(subtitles.map((s) => [s.id, s])).values()].slice(0, limit);
       logger?.info('subtitles found', { kind: parsed.kind, id: String(parsed.id), episode: parsed.episode, count: unique.length });

@@ -2,7 +2,7 @@
 //
 //   GET  /                              the setup page          GET /health
 //   GET  /manifest.json                 not-yet-configured       GET /icon.png, /logo.png, ...
-//   GET  /:config/manifest.json         the user's addon         GET /convert/:token.srt
+//   GET  /:config/manifest.json         the user's addon         GET /convert/:token.(srt|vtt|ass)
 //   GET  /:config/configure             the setup page, filled   POST /api/validate
 //   GET  /:config/subtitles/:type/:id[/:extra].json              GET /subtitles/:type/:id[/:extra].json
 
@@ -15,7 +15,8 @@ import { createKitsu } from './meta/kitsu.js';
 import { buildManifest } from './stremio/manifest.js';
 import { createSubtitleService } from './stremio/subtitles.js';
 import { decodeConfig } from './stremio/userConfig.js';
-import { ConvertError, createConverter, fromToken } from './subs/convert.js';
+import { createArchiveService } from './subs/archive.js';
+import { ConvertError, createConverter, parseToken } from './subs/convert.js';
 
 const PUBLIC = new URL('../public/', import.meta.url);
 const TYPES = {
@@ -102,8 +103,9 @@ export function createApp({ config, fetchImpl = globalThis.fetch, logger = silen
   const kitsu = createKitsu({ config, fetchImpl });
   const anilist = createAniList({ config, fetchImpl });
   const cinemeta = createCinemeta({ config, fetchImpl });
-  const subtitles = createSubtitleService({ config, jimaku, kitsu, anilist, cinemeta, logger });
-  const converter = createConverter({ config, fetchImpl, logger });
+  const archives = createArchiveService({ config, fetchImpl, logger });
+  const subtitles = createSubtitleService({ config, jimaku, kitsu, anilist, cinemeta, archives, logger });
+  const converter = createConverter({ config, fetchImpl, logger, archives });
   const assets = loadAssets();
   const limiter = createRateLimiter({ perMinute: config.limits.validatePerMinute });
 
@@ -191,8 +193,9 @@ export function createApp({ config, fetchImpl = globalThis.fetch, logger = silen
 
   async function convertRoute(req, res, name) {
     try {
-      const url = fromToken(name.replace(/\.srt$/, ''));
-      const result = await converter.convert(url);
+      // The suffix says what the player gets (.srt and .vtt convert, .ass keeps the styled file); the token says which file.
+      const suffix = /\.(srt|vtt|ass)$/.exec(name)?.[1];
+      const result = await converter.convert(parseToken(name.replace(/\.(srt|vtt|ass)$/, '')), { as: suffix });
       return send(req, res, 200, result.body, {
         'Content-Type': result.contentType,
         'Cache-Control': 'public, max-age=3600',
@@ -263,5 +266,5 @@ export function createApp({ config, fetchImpl = globalThis.fetch, logger = silen
     }
   }
 
-  return { handler, services: { jimaku, kitsu, anilist, cinemeta, subtitles, converter }, close: () => limiter.stop() };
+  return { handler, services: { jimaku, kitsu, anilist, cinemeta, subtitles, converter, archives }, close: () => limiter.stop() };
 }
